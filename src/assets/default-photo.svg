@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1280" viewBox="0 0 1024 1280">
+  <!-- Bundled default print: a silver-gelatin style landscape. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2a2e"/>
+      <stop offset="0.55" stop-color="#7d7a74"/>
+      <stop offset="1" stop-color="#c9c2b4"/>
+    </linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b3ac9e"/>
+      <stop offset="0.5" stop-color="#5d5a55"/>
+      <stop offset="1" stop-color="#26262a"/>
+    </linearGradient>
+    <radialGradient id="moonGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f4f0e6" stop-opacity="0.9"/>
+      <stop offset="0.35" stop-color="#e8e2d2" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#e8e2d2" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ridgeFar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#55534f"/>
+      <stop offset="1" stop-color="#3c3b3a"/>
+    </linearGradient>
+    <linearGradient id="ridgeNear" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2e2d2c"/>
+      <stop offset="1" stop-color="#1c1c1e"/>
+    </linearGradient>
+    <radialGradient id="vignette" cx="0.5" cy="0.46" r="0.75">
+      <stop offset="0.6" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.42"/>
+    </radialGradient>
+    <filter id="grain">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 0.06 0"/>
+      <feComposite operator="over" in2="SourceGraphic"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#grain)">
+    <rect width="1024" height="760" fill="url(#sky)"/>
+    <circle cx="700" cy="240" r="220" fill="url(#moonGlow)"/>
+    <circle cx="700" cy="240" r="58" fill="#efeadd"/>
+    <circle cx="682" cy="226" r="9" fill="#d9d2c0" opacity="0.7"/>
+    <circle cx="716" cy="252" r="6" fill="#d9d2c0" opacity="0.6"/>
+
+    <path d="M0 560 L150 420 L260 510 L390 370 L520 520 L640 440 L780 560 L1024 470 L1024 760 L0 760 Z"
+          fill="url(#ridgeFar)"/>
+    <path d="M0 660 L120 540 L250 630 L420 480 L600 640 L760 560 L900 660 L1024 600 L1024 760 L0 760 Z"
+          fill="url(#ridgeNear)"/>
+
+    <rect y="760" width="1024" height="520" fill="url(#water)"/>
+    <ellipse cx="700" cy="800" rx="180" ry="14" fill="#ddd6c4" opacity="0.30"/>
+    <ellipse cx="690" cy="840" rx="230" ry="10" fill="#ddd6c4" opacity="0.22"/>
+    <ellipse cx="710" cy="885" rx="160" ry="8" fill="#ddd6c4" opacity="0.16"/>
+    <ellipse cx="695" cy="935" rx="260" ry="7" fill="#ddd6c4" opacity="0.12"/>
+    <ellipse cx="705" cy="990" rx="190" ry="6" fill="#ddd6c4" opacity="0.08"/>
+    <path d="M0 760 L1024 760" stroke="#8f897c" stroke-width="3" opacity="0.5"/>
+
+    <path d="M40 1180 Q 512 1140 984 1180" stroke="#11111a" stroke-width="0" fill="none"/>
+  </g>
+  <rect width="1024" height="1280" fill="url(#vignette)"/>
+</svg>
