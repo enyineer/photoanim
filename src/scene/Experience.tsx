@@ -21,6 +21,7 @@ import {
   sheetSurfaceSpeed,
   stepFrame,
   terminalVelocity,
+  tiltSine,
   DRY_FILM_THICKNESS,
   INITIAL_FILM_THICKNESS,
 } from '../physics';
@@ -34,7 +35,6 @@ import {
 } from './shaders';
 import { DEFAULT_PHOTO_URL } from '../photoUrl';
 
-const PHOTO_Z = 0.015;
 const TRAY_INNER_W = 0.47;
 const TRAY_INNER_D = 0.34;
 const TRAY_DEPTH = 0.26;
@@ -86,6 +86,14 @@ export function Experience({ quality, photoUrl, scrollRef }: {
     [quality.dripSites],
   );
 
+  // The print lies almost parallel to the water, low edge toward the
+  // camera. Plate coordinate v (0 at the low edge) maps to world
+  // (y: bottomY + v sinT, z: groupZ - v cosT); groupZ centres it in the tray.
+  const sinT = tiltSine(config);
+  const cosT = Math.sqrt(1 - sinT * sinT);
+  const groupZ = (cosT * config.photoHeight) / 2;
+  const gAlongPlate = config.gravity * sinT;
+
   const { texture, aspect } = usePhotoTexture(photoUrl || DEFAULT_PHOTO_URL);
 
   const sim = useRef<FrameState>(createFrameState(config));
@@ -121,7 +129,7 @@ export function Experience({ quality, photoUrl, scrollRef }: {
       },
       uRippleWavelength: { value: 0.045 },
       uRippleDamping: { value: 1.1 },
-      uMeniscus: { value: new THREE.Vector4(config.photoWidth / 2, PHOTO_Z, 0, 0.0024) },
+      uMeniscus: { value: new THREE.Vector4(config.photoWidth / 2, groupZ, 0, 0.0024) },
       uPierce: { value: 0 },
       uDeepColor: { value: new THREE.Color('#241a10') },
       uShallowColor: { value: new THREE.Color('#4a3a22') },
@@ -129,7 +137,7 @@ export function Experience({ quality, photoUrl, scrollRef }: {
       uLightDir: { value: LIGHT_DIR.clone() },
       uSpecStrength: { value: quality.lowPower ? 0.6 : 1.0 },
     }),
-    [config, quality],
+    [config, quality, groupZ],
   );
 
   const photoUniforms = useMemo(
@@ -146,12 +154,13 @@ export function Experience({ quality, photoUrl, scrollRef }: {
       uDryH: { value: DRY_FILM_THICKNESS },
       uViscosity: { value: config.fluidViscosity },
       uDensity: { value: config.fluidDensity },
-      uGravity: { value: config.gravity },
+      // Drainage on the nearly-flat plate feels only g * sin(tilt).
+      uGravity: { value: gAlongPlate },
       uStreakOffset: { value: 0 },
       uLightDir: { value: LIGHT_DIR.clone() },
       uBorder: { value: 0.055 },
     }),
-    [texture, aspect, config],
+    [texture, aspect, config, gAlongPlate],
   );
 
   const addRipple = (x: number, z: number, amp: number) => {
@@ -167,12 +176,15 @@ export function Experience({ quality, photoUrl, scrollRef }: {
     const state = stepFrame(sim.current, { scroll: scrollRef.current ?? 0, dt }, config);
     sim.current = state;
 
-    // --- photo pose -------------------------------------------------------
+    // --- photo pose: lying nearly flat, low edge toward the camera --------
     if (photoGroup.current) {
-      photoGroup.current.position.set(0, state.photoBottomY, PHOTO_Z);
-      const sway = quality.reducedMotion ? 0 : carryTilt(state.progress, 0.05);
-      photoGroup.current.rotation.set(-0.05 - state.progress * 0.07, 0, sway);
+      photoGroup.current.position.set(0, state.photoBottomY, groupZ);
+      const sway = quality.reducedMotion ? 0 : carryTilt(state.progress, 0.03);
+      photoGroup.current.rotation.set(-Math.PI / 2 + config.tiltAngle, 0, sway);
     }
+
+    // World z of the contact line where the print pierces the surface.
+    const contactZ = groupZ - cosT * Math.max(0, Math.min(state.waterlineLocal, config.photoHeight));
 
     // --- wetting / drying uniforms ---------------------------------------
     const fullyOut = state.waterlineLocal <= 0;
@@ -199,7 +211,7 @@ export function Experience({ quality, photoUrl, scrollRef }: {
         state.bottomFilmThickness,
         config.fluidDensity,
         config.fluidViscosity,
-        config.gravity,
+        gAlongPlate,
       ) /
         config.photoHeight) *
       dt;
@@ -218,7 +230,12 @@ export function Experience({ quality, photoUrl, scrollRef }: {
     if (waterMaterial.current) {
       const u = waterMaterial.current.uniforms;
       u.uTime.value = state.time;
-      u.uMeniscus.value.set(config.photoWidth / 2, PHOTO_Z, state.meniscusRise, state.capillaryLen);
+      u.uMeniscus.value.set(
+        config.photoWidth / 2,
+        contactZ,
+        state.meniscusRise,
+        state.capillaryLen,
+      );
       u.uPierce.value = pierce;
     }
 
@@ -230,7 +247,7 @@ export function Experience({ quality, photoUrl, scrollRef }: {
       const amp = rippleSourceAmplitude(state.liftSpeed, 0.02, 0.005);
       rippleSide.current = (rippleSide.current + 1) % 5;
       const x = ((rippleSide.current - 2) / 2) * config.photoWidth * 0.45;
-      addRipple(x, PHOTO_Z, amp);
+      addRipple(x, contactZ, amp);
       lastRippleTime.current = state.time;
     }
 
@@ -245,7 +262,8 @@ export function Experience({ quality, photoUrl, scrollRef }: {
         const r = dropletRadius(mass, config.fluidDensity);
         const x = pendantSiteX(i, n, config.photoWidth);
         const visible = fullyOut && r > 8e-4;
-        dummy.position.set(x, state.photoBottomY - r * 0.9, PHOTO_Z + 0.001);
+        // Drops gather on the underside of the low (near) edge.
+        dummy.position.set(x, state.photoBottomY - r * 0.9, groupZ + 0.001);
         const s = visible ? r : 1e-6;
         // Pendant drops sag: narrow at the rim, bulbous below.
         dummy.scale.set(s * 0.8, s * 1.45, s * 0.8);
@@ -263,7 +281,7 @@ export function Experience({ quality, photoUrl, scrollRef }: {
       const r = dropletRadius(d.mass, config.fluidDensity);
       falling.current.push({
         x,
-        z: PHOTO_Z + 0.001,
+        z: groupZ + 0.001,
         startY: state.photoBottomY - r,
         startTime: state.time,
         radius: r,
@@ -318,7 +336,7 @@ export function Experience({ quality, photoUrl, scrollRef }: {
       </mesh>
 
       {/* the print */}
-      <group ref={photoGroup} position={[0, -0.2, PHOTO_Z]}>
+      <group ref={photoGroup} position={[0, config.restY, groupZ]} rotation={[-Math.PI / 2 + config.tiltAngle, 0, 0]}>
         <mesh position={[0, config.photoHeight / 2, 0]}>
           <planeGeometry args={[config.photoWidth, config.photoHeight]} />
           <shaderMaterial

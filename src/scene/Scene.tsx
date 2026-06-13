@@ -34,9 +34,9 @@ export function Scene({ quality, photoUrl, scrollRef }: {
     <div className="canvas-wrap" aria-hidden="true">
       <Canvas
         dpr={[1, quality.maxDpr]}
-        camera={{ position: [0, 0.18, 0.52], fov: 38, near: 0.01, far: 10 }}
+        camera={{ position: [0, 0.42, 0.46], fov: 38, near: 0.01, far: 10 }}
         gl={{ antialias: !quality.lowPower, powerPreference: 'low-power' }}
-        onCreated={({ camera }) => camera.lookAt(0, 0.1, 0)}
+        onCreated={({ camera }) => camera.lookAt(0, 0.03, 0)}
       >
         <color attach="background" args={['#16100c']} />
         <fog attach="fog" args={['#16100c', 0.8, 2.2]} />

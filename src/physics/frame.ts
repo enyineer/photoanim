@@ -6,7 +6,7 @@
  * unit-testable without a GPU or a DOM.
  */
 import { FIXER_DENSITY, FIXER_SURFACE_TENSION, FIXER_VISCOSITY, GRAVITY, INITIAL_FILM_THICKNESS } from './constants';
-import { saturate } from './math';
+import { clamp, saturate } from './math';
 import { submergedDepth, submergedFraction } from './buoyancy';
 import {
   capillaryLength,
@@ -30,7 +30,14 @@ export interface FrameConfig {
   /** Photo dimensions (m). */
   readonly photoWidth: number;
   readonly photoHeight: number;
-  /** Bottom-edge rest (submerged) and raised world Y (m). */
+  /**
+   * Angle between the print and the water surface (rad). pi/2 means the
+   * print hangs vertically; a small angle means it is lifted lying almost
+   * flat, so its vertical span shrinks to photoHeight * sin(tilt) and the
+   * drainage along the plate is driven by g * sin(tilt).
+   */
+  readonly tiltAngle: number;
+  /** Low-edge rest (submerged) and raised world Y (m). */
   readonly restY: number;
   readonly raisedY: number;
   /** Undisturbed water surface world Y (m). */
@@ -50,8 +57,9 @@ export interface FrameConfig {
 export const DEFAULT_FRAME_CONFIG: FrameConfig = {
   photoWidth: 0.127, // 5x7" print
   photoHeight: 0.178,
-  restY: -0.2,
-  raisedY: 0.3,
+  tiltAngle: 0.15, // lifted nearly flat, low edge toward the viewer
+  restY: -0.05,
+  raisedY: 0.2,
   waterLevelY: 0,
   dripSiteCount: 7,
   contactAngle: (25 * Math.PI) / 180,
@@ -67,11 +75,14 @@ export interface FrameState {
   readonly time: number;
   /** Eased lift progress in [0, 1]. */
   readonly progress: number;
-  /** World Y of the photo's bottom edge (m). */
+  /** World Y of the photo's low edge (m). */
   readonly photoBottomY: number;
   /** Vertical lift speed (m/s, up positive). */
   readonly liftSpeed: number;
-  /** Waterline in photo-local coordinates (m above bottom edge). */
+  /**
+   * Waterline in plate coordinates: distance along the print's surface
+   * above its low edge (m). Negative once the print is clear of the bath.
+   */
   readonly waterlineLocal: number;
   /** Fraction of the photo under water, [0, 1]. */
   readonly submergedFraction: number;
@@ -95,10 +106,18 @@ export interface FrameState {
   readonly detachedDrops: readonly DetachedDrop[];
 }
 
+/** sin(tilt), with the angle floored away from zero so the plate-coordinate
+ * mapping stays finite even for a configured perfectly-level print. */
+export function tiltSine(config: FrameConfig): number {
+  return Math.sin(clamp(config.tiltAngle, 0.03, Math.PI / 2));
+}
+
 /** Initial state for a given config (photo at rest in the bath). */
 export function createFrameState(config: FrameConfig = DEFAULT_FRAME_CONFIG): FrameState {
   const bottom = photoBottomY(0, config.restY, config.raisedY);
-  const wl = waterlineLocal(bottom, config.waterLevelY);
+  const sinT = tiltSine(config);
+  const span = config.photoHeight * sinT;
+  const wl = waterlineLocal(bottom, config.waterLevelY) / sinT;
   const lc = capillaryLength(config.surfaceTension, config.fluidDensity, config.gravity);
   return {
     time: 0,
@@ -106,8 +125,8 @@ export function createFrameState(config: FrameConfig = DEFAULT_FRAME_CONFIG): Fr
     photoBottomY: bottom,
     liftSpeed: 0,
     waterlineLocal: wl,
-    submergedFraction: submergedFraction(bottom, config.photoHeight, config.waterLevelY),
-    submergedDepth: submergedDepth(bottom, config.photoHeight, config.waterLevelY),
+    submergedFraction: submergedFraction(bottom, span, config.waterLevelY),
+    submergedDepth: submergedDepth(bottom, span, config.waterLevelY),
     timeSinceEmerged: 0,
     meniscusRise: meniscusRiseHeight(config.contactAngle, lc),
     capillaryLen: lc,
@@ -139,9 +158,18 @@ export function stepFrame(
   const bottom = photoBottomY(progress, config.restY, config.raisedY);
   const liftSpeed = verticalVelocity(prev.photoBottomY, bottom, dt, config.maxLiftSpeed);
 
-  const wl = waterlineLocal(bottom, config.waterLevelY);
-  const frac = submergedFraction(bottom, config.photoHeight, config.waterLevelY);
-  const depth = submergedDepth(bottom, config.photoHeight, config.waterLevelY);
+  // Plate coordinates: the tilted print spans photoHeight * sin(tilt)
+  // vertically, and a vertical offset maps to distance-along-plate by
+  // dividing by sin(tilt). Drainage along the plate feels only the
+  // gravity component parallel to it.
+  const sinT = tiltSine(config);
+  const span = config.photoHeight * sinT;
+  const gAlongPlate = config.gravity * sinT;
+
+  const wlVertical = waterlineLocal(bottom, config.waterLevelY);
+  const wl = wlVertical / sinT;
+  const frac = submergedFraction(bottom, span, config.waterLevelY);
+  const depth = submergedDepth(bottom, span, config.waterLevelY);
 
   const lc = capillaryLength(config.surfaceTension, config.fluidDensity, config.gravity);
   // Withdrawal drags extra liquid up the plate: dynamic meniscus.
@@ -150,12 +178,13 @@ export function stepFrame(
 
   const emerged = wl < 0;
   const timeSinceEmerged = emerged ? prev.timeSinceEmerged + dt : 0;
-  const gap = emerged ? -wl : 0;
+  // The liquid bridge stretches across the true vertical gap.
+  const gap = emerged ? -wlVertical : 0;
   const bridgeFactor = liquidBridgeFactor(gap, lc);
 
-  // Film at the bottom edge: while the edge is submerged the film is fully
+  // Film at the low edge: while that edge is submerged the film is fully
   // replenished; once out, it drains per Jeffreys with the wetted length of
-  // the photo above it feeding it.
+  // plate above it feeding it, under the along-plate gravity component.
   const wettedLengthAboveBottom = emerged
     ? config.photoHeight
     : Math.max(0, config.photoHeight - wl);
@@ -165,7 +194,7 @@ export function stepFrame(
         timeSinceEmerged,
         config.fluidViscosity,
         config.fluidDensity,
-        config.gravity,
+        gAlongPlate,
       )
     : INITIAL_FILM_THICKNESS;
 
@@ -178,7 +207,7 @@ export function stepFrame(
           config.photoWidth,
           config.fluidDensity,
           config.fluidViscosity,
-          config.gravity,
+          gAlongPlate,
         ) * exposedFraction
       : 0;
 

@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   createFrameState,
   DEFAULT_FRAME_CONFIG,
+  type FrameConfig,
   type FrameState,
   stepFrame,
+  tiltSine,
 } from '../frame';
 import { INITIAL_FILM_THICKNESS } from '../constants';
 
@@ -12,11 +14,12 @@ function simulate(
   scrollAt: (t: number) => number,
   seconds: number,
   onFrame?: (s: FrameState) => void,
+  config: FrameConfig = DEFAULT_FRAME_CONFIG,
 ): FrameState {
   const dt = 1 / 60;
-  let state = createFrameState();
+  let state = createFrameState(config);
   for (let t = 0; t < seconds; t += dt) {
-    state = stepFrame(state, { scroll: scrollAt(t), dt });
+    state = stepFrame(state, { scroll: scrollAt(t), dt }, config);
     onFrame?.(state);
   }
   return state;
@@ -152,6 +155,60 @@ describe('emergence physics', () => {
       }
     });
     expect(risingRise).toBeGreaterThan(final.meniscusRise);
+  });
+});
+
+describe('tilted (flat) lift geometry', () => {
+  it('plate waterline times sin(tilt) equals the vertical offset', () => {
+    simulate((t) => Math.min(1, t / 4), 6, (s) => {
+      const vertical = DEFAULT_FRAME_CONFIG.waterLevelY - s.photoBottomY;
+      expect(s.waterlineLocal * tiltSine(DEFAULT_FRAME_CONFIG)).toBeCloseTo(vertical, 9);
+    });
+  });
+
+  it('a nearly-flat print clears the surface over a short vertical span', () => {
+    // The piercing window (0 < submergedFraction < 1) spans
+    // photoHeight * sin(tilt) of vertical travel.
+    let minY = Infinity;
+    let maxY = -Infinity;
+    simulate((t) => Math.min(1, t / 6), 8, (s) => {
+      if (s.submergedFraction > 0 && s.submergedFraction < 1) {
+        minY = Math.min(minY, s.photoBottomY);
+        maxY = Math.max(maxY, s.photoBottomY);
+      }
+    });
+    const span = DEFAULT_FRAME_CONFIG.photoHeight * tiltSine(DEFAULT_FRAME_CONFIG);
+    expect(maxY - minY).toBeLessThanOrEqual(span + 1e-6);
+    expect(maxY - minY).toBeGreaterThan(span * 0.5);
+  });
+
+  it('a flatter print drains more slowly than a vertical one', () => {
+    const flat = DEFAULT_FRAME_CONFIG;
+    const vertical: FrameConfig = { ...DEFAULT_FRAME_CONFIG, tiltAngle: Math.PI / 2 };
+    const filmAt = (config: FrameConfig) => {
+      let film = 0;
+      simulate(
+        (t) => Math.min(1, t / 2),
+        20,
+        (s) => {
+          if (s.timeSinceEmerged > 0) film = s.bottomFilmThickness;
+        },
+        config,
+      );
+      return film;
+    };
+    expect(filmAt(flat)).toBeGreaterThan(filmAt(vertical));
+  });
+
+  it('a vertical print (tilt = pi/2) keeps plate and vertical coordinates equal', () => {
+    const vertical: FrameConfig = {
+      ...DEFAULT_FRAME_CONFIG,
+      tiltAngle: Math.PI / 2,
+      restY: -0.2,
+      raisedY: 0.3,
+    };
+    const s = createFrameState(vertical);
+    expect(s.waterlineLocal).toBeCloseTo(vertical.waterLevelY - vertical.restY, 12);
   });
 });
 
