@@ -55,21 +55,6 @@ npm run build      # production build (dist/)
 
 ## Deployment
 
-`setup/deploy-pages.yml` is the GitHub Actions workflow: it lints, tests,
-builds and publishes `dist/` to GitHub Pages (Actions source), and enables
-Pages itself on the first run (`actions/configure-pages` with
-`enablement: true`).
-
-**One-time setup:** GitHub refuses workflow-file pushes from OAuth-app
-tokens without the `workflow` scope, so the file ships at a staging path.
-Activate it with one command from a normally-authenticated checkout:
-
-```sh
-mkdir -p .github/workflows \
-  && git mv setup/deploy-pages.yml .github/workflows/deploy.yml \
-  && git commit -m "Activate Pages deploy workflow" \
-  && git push
-```
-
-The push triggers the workflow, which creates the Pages site and deploys.
-Subsequent pushes to `main` or the feature branch redeploy automatically.
+Pushes to the deploy branches trigger `.github/workflows/deploy.yml`,
+which lints, runs the physics test suite, builds, and publishes `dist/`
+to GitHub Pages (Actions source).
