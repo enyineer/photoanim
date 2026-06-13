@@ -79,14 +79,16 @@ export function createDripSites(siteCount: number): DripSitesState {
 
 /**
  * Deterministic, irregular share of the drainage each edge site receives.
- * A real print edge never feeds its drops evenly — micro-scratches and the
- * tilt of the print concentrate the runoff — so identical weights would
- * make every drop grow and fall in lockstep, which looks (and is) wrong.
+ * Surface tension gathers the draining film into a handful of rivulets, so
+ * the distribution must be strongly concentrated, not merely uneven: a
+ * cubic skew on the hash gives a couple of dominant sites that drip
+ * steadily while the rest accumulate slowly — a real edge shows two or
+ * three active drip points, never a uniform row of beads.
  */
 export function dripSiteWeights(siteCount: number): number[] {
   const n = Math.max(0, Math.floor(siteCount));
   const weights = new Array<number>(n);
-  for (let i = 0; i < n; i++) weights[i] = 0.35 + 1.3 * hash01(i);
+  for (let i = 0; i < n; i++) weights[i] = 0.08 + 1.5 * hash01(i) ** 3;
   return weights;
 }
 

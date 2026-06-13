@@ -7,9 +7,11 @@ import { useMemo, useRef } from 'react';
 import { useFrame, useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
+  capillaryLength,
   carryTilt,
   createFrameState,
   DEFAULT_FRAME_CONFIG,
+  dripSiteDetachMasses,
   dropletImpactAmplitude,
   dropletRadius,
   fallDistance,
@@ -19,6 +21,7 @@ import {
   lerp,
   rippleSourceAmplitude,
   sheetSurfaceSpeed,
+  smoothstep,
   stepFrame,
   terminalVelocity,
   tiltSine,
@@ -34,6 +37,14 @@ import {
   waterVertexShader,
 } from './shaders';
 import { DEFAULT_PHOTO_URL } from '../photoUrl';
+
+/**
+ * Presentation gain on droplet radii. Physically correct millimetre drops
+ * are only a couple of pixels at this camera distance and read as noise;
+ * the timing, masses and trajectories stay physical, only the rendered
+ * size is scaled.
+ */
+const DROP_RENDER_SCALE = 2.2;
 
 const TRAY_INNER_W = 0.47;
 const TRAY_INNER_D = 0.34;
@@ -93,6 +104,19 @@ export function Experience({ quality, photoUrl, scrollRef }: {
   const cosT = Math.sqrt(1 - sinT * sinT);
   const groupZ = (cosT * config.photoHeight) / 2;
   const gAlongPlate = config.gravity * sinT;
+
+  // Per-site Tate thresholds, used to make pendant drops sag and stretch
+  // as they approach detachment.
+  const detachMasses = useMemo(
+    () =>
+      dripSiteDetachMasses(
+        config.dripSiteCount,
+        capillaryLength(config.surfaceTension, config.fluidDensity, config.gravity),
+        config.surfaceTension,
+        config.gravity,
+      ),
+    [config],
+  );
 
   const { texture, aspect } = usePhotoTexture(photoUrl || DEFAULT_PHOTO_URL);
 
@@ -252,21 +276,23 @@ export function Experience({ quality, photoUrl, scrollRef }: {
     }
 
     // --- pendant drops on the bottom edge ---------------------------------
-    // Sites are spread irregularly (deterministic jitter) and a drop only
-    // becomes visible once it has gathered enough liquid to bulge below
-    // the edge — a real edge shows two or three growing beads, not a row.
+    // Drops bulge into view gradually as liquid gathers, sag and stretch as
+    // they near their Tate threshold, then release. Drainage weights are
+    // strongly concentrated, so only a few sites ever carry a visible drop.
     if (pendantMesh.current) {
       const n = state.drips.pendantMasses.length;
       for (let i = 0; i < n; i++) {
         const mass = state.drips.pendantMasses[i];
         const r = dropletRadius(mass, config.fluidDensity);
+        // Smooth emergence instead of a pop-in, plus sag toward detachment.
+        const grow = fullyOut ? smoothstep(4e-4, 1.2e-3, r) : 0;
+        const near = smoothstep(0.45, 1, mass / detachMasses[i]);
+        const s = r * DROP_RENDER_SCALE * grow;
         const x = pendantSiteX(i, n, config.photoWidth);
-        const visible = fullyOut && r > 8e-4;
-        // Drops gather on the underside of the low (near) edge.
-        dummy.position.set(x, state.photoBottomY - r * 0.9, groupZ + 0.001);
-        const s = visible ? r : 1e-6;
-        // Pendant drops sag: narrow at the rim, bulbous below.
-        dummy.scale.set(s * 0.8, s * 1.45, s * 0.8);
+        const zJitter = (hash01(i + 57) - 0.5) * 0.004;
+        dummy.position.set(x, state.photoBottomY - s * 0.85, groupZ + 0.001 + zJitter);
+        const wScale = s * (0.9 - 0.15 * near);
+        dummy.scale.set(Math.max(wScale, 1e-6), Math.max(s * (1.15 + 0.55 * near), 1e-6), Math.max(wScale, 1e-6));
         dummy.updateMatrix();
         pendantMesh.current.setMatrixAt(i, dummy.matrix);
       }
@@ -281,8 +307,8 @@ export function Experience({ quality, photoUrl, scrollRef }: {
       const r = dropletRadius(d.mass, config.fluidDensity);
       falling.current.push({
         x,
-        z: groupZ + 0.001,
-        startY: state.photoBottomY - r,
+        z: groupZ + 0.001 + (hash01(d.site + 57) - 0.5) * 0.004,
+        startY: state.photoBottomY - r * DROP_RENDER_SCALE,
         startTime: state.time,
         radius: r,
         vTerminal: terminalVelocity(r, config.gravity),
@@ -306,7 +332,8 @@ export function Experience({ quality, photoUrl, scrollRef }: {
           const y = d.startY - fallDistance(state.time - d.startTime, d.vTerminal, config.gravity);
           dummy.position.set(d.x, y, d.z);
           // Drops stretch slightly as they accelerate.
-          dummy.scale.set(d.radius * 0.85, d.radius * 1.35, d.radius * 0.85);
+          const s = d.radius * DROP_RENDER_SCALE;
+          dummy.scale.set(s * 0.85, s * 1.3, s * 0.85);
         } else {
           dummy.position.set(0, -10, 0);
           dummy.scale.setScalar(1e-6);
@@ -376,16 +403,16 @@ export function Experience({ quality, photoUrl, scrollRef }: {
 function DropletMaterial({ lowPower }: { lowPower: boolean }) {
   return (
     <meshPhysicalMaterial
-      color="#dfe7e4"
-      transmission={lowPower ? 0 : 0.92}
-      opacity={lowPower ? 0.45 : 1}
+      color="#e9eff1"
+      transmission={lowPower ? 0 : 0.95}
+      opacity={lowPower ? 0.4 : 1}
       transparent
-      roughness={0.04}
+      roughness={0.02}
       metalness={0}
       ior={1.33}
-      thickness={0.0035}
+      thickness={0.004}
       specularIntensity={1}
-      clearcoat={0.6}
+      clearcoat={0.8}
     />
   );
 }

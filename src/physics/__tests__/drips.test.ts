@@ -96,6 +96,14 @@ describe('dripSiteWeights / dripSiteDetachMasses', () => {
     expect(new Set(a.map((w) => w.toFixed(6))).size).toBe(7); // no two alike
   });
 
+  it('drainage concentrates into rivulets: a few sites dominate', () => {
+    const w = dripSiteWeights(7);
+    const sum = w.reduce((acc, x) => acc + x, 0);
+    const sorted = [...w].sort((x, y) => y - x);
+    expect(Math.max(...w) / Math.min(...w)).toBeGreaterThan(4);
+    expect((sorted[0] + sorted[1]) / sum).toBeGreaterThan(0.5);
+  });
+
   it('per-site detach masses vary around the Tate scale', () => {
     const base = tateDetachmentMass(0.0024, 0.06);
     const masses = dripSiteDetachMasses(7, 0.0024, 0.06);
