@@ -69,6 +69,18 @@ export function wetnessExponential(exposureTime: number, tau: number): number {
 }
 
 /**
+ * Visible gloss for a given wetness, in [0, 1]. A liquid film keeps a
+ * mirror-like sheen until it is almost gone — gloss is governed by the
+ * presence of a continuous film, not its volume — so the curve saturates
+ * early: g = 1 - (1 - w)^3. Monotonic, fixed points at 0 and 1, and always
+ * >= the raw wetness.
+ */
+export function glossFromWetness(wetness: number): number {
+  const w = saturate(wetness);
+  return 1 - (1 - w) ** 3;
+}
+
+/**
  * Fraction of the photo's area that still reads as wet, given the waterline
  * and a drying front descending from the top. Useful as a single scalar for
  * LOD decisions (e.g. how many runoff streaks to draw).

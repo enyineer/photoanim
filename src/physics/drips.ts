@@ -11,6 +11,7 @@
  * inputs always produce the same droplet timeline.
  */
 import { GRAVITY } from './constants';
+import { hash01 } from './math';
 
 /** Pendant-drop mass at which detachment occurs, per Tate's law (kg). */
 export function tateDetachmentMass(
@@ -77,10 +78,44 @@ export function createDripSites(siteCount: number): DripSitesState {
 }
 
 /**
+ * Deterministic, irregular share of the drainage each edge site receives.
+ * A real print edge never feeds its drops evenly — micro-scratches and the
+ * tilt of the print concentrate the runoff — so identical weights would
+ * make every drop grow and fall in lockstep, which looks (and is) wrong.
+ */
+export function dripSiteWeights(siteCount: number): number[] {
+  const n = Math.max(0, Math.floor(siteCount));
+  const weights = new Array<number>(n);
+  for (let i = 0; i < n; i++) weights[i] = 0.35 + 1.3 * hash01(i);
+  return weights;
+}
+
+/**
+ * Per-site detachment masses: the local rim radius each pendant drop hangs
+ * from varies along the edge, so Tate thresholds vary too. Spread is
+ * ±35 % around the base rim radius, deterministic per site.
+ */
+export function dripSiteDetachMasses(
+  siteCount: number,
+  baseRimRadius: number,
+  surfaceTension: number,
+  g: number = GRAVITY,
+): number[] {
+  const n = Math.max(0, Math.floor(siteCount));
+  const masses = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    const rim = Math.max(0, baseRimRadius) * (0.65 + 0.7 * hash01(i + 31));
+    masses[i] = tateDetachmentMass(rim, surfaceTension, g);
+  }
+  return masses;
+}
+
+/**
  * Advance all pendant drops by `dt` seconds. `totalMassFlux` (kg/s) is the
  * drainage arriving at the bottom edge, split across sites by `siteWeights`
- * (un-normalised; defaults to uniform). Deterministic: detachment happens
- * exactly when a site's pendant mass crosses the Tate threshold.
+ * (un-normalised; defaults to uniform). `detachMass` may be a single Tate
+ * threshold or one per site. Deterministic: detachment happens exactly when
+ * a site's pendant mass crosses its threshold.
  *
  * Mass is conserved: influx = delta(pendant) + sum(detached masses).
  */
@@ -88,7 +123,7 @@ export function stepDrips(
   state: DripSitesState,
   totalMassFlux: number,
   dt: number,
-  detachMass: number,
+  detachMass: number | readonly number[],
   siteWeights?: readonly number[],
 ): DripStepResult {
   const n = state.pendantMasses.length;
@@ -101,11 +136,14 @@ export function stepDrips(
   if (weightSum <= 0) return { state, detached: [] };
 
   const influx = Math.max(0, totalMassFlux) * dt;
-  const threshold = Math.max(1e-15, detachMass);
   const masses = new Array<number>(n);
   const detached: DetachedDrop[] = [];
 
   for (let i = 0; i < n; i++) {
+    const threshold = Math.max(
+      1e-15,
+      typeof detachMass === 'number' ? detachMass : (detachMass[i] ?? detachMass[0] ?? 0),
+    );
     let m = state.pendantMasses[i] + (influx * Math.max(0, weights[i])) / weightSum;
     if (m >= threshold) {
       const dropMass = m * HARKINS_BROWN_FRACTION;

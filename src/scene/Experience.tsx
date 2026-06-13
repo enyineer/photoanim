@@ -15,6 +15,7 @@ import {
   fallDistance,
   type FrameConfig,
   type FrameState,
+  hash01,
   lerp,
   rippleSourceAmplitude,
   sheetSurfaceSpeed,
@@ -39,6 +40,13 @@ const TRAY_INNER_D = 0.34;
 const TRAY_DEPTH = 0.26;
 const TRAY_RIM_Y = 0.045;
 const LIGHT_DIR = new THREE.Vector3(0.35, 0.9, 0.55);
+
+/** Irregular but deterministic x position of a drip site along the edge. */
+function pendantSiteX(site: number, siteCount: number, photoWidth: number): number {
+  const base = siteCount > 1 ? (site / (siteCount - 1) - 0.5) * photoWidth * 0.85 : 0;
+  const spacing = siteCount > 1 ? (photoWidth * 0.85) / (siteCount - 1) : photoWidth * 0.5;
+  return base + (hash01(site + 17) - 0.5) * spacing * 0.7;
+}
 
 interface FallingDrop {
   x: number;
@@ -227,16 +235,20 @@ export function Experience({ quality, photoUrl, scrollRef }: {
     }
 
     // --- pendant drops on the bottom edge ---------------------------------
+    // Sites are spread irregularly (deterministic jitter) and a drop only
+    // becomes visible once it has gathered enough liquid to bulge below
+    // the edge — a real edge shows two or three growing beads, not a row.
     if (pendantMesh.current) {
       const n = state.drips.pendantMasses.length;
       for (let i = 0; i < n; i++) {
         const mass = state.drips.pendantMasses[i];
         const r = dropletRadius(mass, config.fluidDensity);
-        const x = n > 1 ? ((i / (n - 1) - 0.5) * config.photoWidth) * 0.85 : 0;
-        const visible = fullyOut && r > 4e-4;
-        dummy.position.set(x, state.photoBottomY - r * 0.7, PHOTO_Z + 0.001);
+        const x = pendantSiteX(i, n, config.photoWidth);
+        const visible = fullyOut && r > 8e-4;
+        dummy.position.set(x, state.photoBottomY - r * 0.9, PHOTO_Z + 0.001);
         const s = visible ? r : 1e-6;
-        dummy.scale.set(s, s * 1.25, s);
+        // Pendant drops sag: narrow at the rim, bulbous below.
+        dummy.scale.set(s * 0.8, s * 1.45, s * 0.8);
         dummy.updateMatrix();
         pendantMesh.current.setMatrixAt(i, dummy.matrix);
       }
@@ -247,7 +259,7 @@ export function Experience({ quality, photoUrl, scrollRef }: {
     for (const d of state.detachedDrops) {
       if (falling.current.length >= quality.maxDroplets) break;
       const n = state.drips.pendantMasses.length;
-      const x = n > 1 ? ((d.site / (n - 1) - 0.5) * config.photoWidth) * 0.85 : 0;
+      const x = pendantSiteX(d.site, n, config.photoWidth);
       const r = dropletRadius(d.mass, config.fluidDensity);
       falling.current.push({
         x,
@@ -276,7 +288,7 @@ export function Experience({ quality, photoUrl, scrollRef }: {
           const y = d.startY - fallDistance(state.time - d.startTime, d.vTerminal, config.gravity);
           dummy.position.set(d.x, y, d.z);
           // Drops stretch slightly as they accelerate.
-          dummy.scale.set(d.radius, d.radius * 1.35, d.radius);
+          dummy.scale.set(d.radius * 0.85, d.radius * 1.35, d.radius * 0.85);
         } else {
           dummy.position.set(0, -10, 0);
           dummy.scale.setScalar(1e-6);
@@ -325,33 +337,38 @@ export function Experience({ quality, photoUrl, scrollRef }: {
 
       {/* droplets */}
       <instancedMesh ref={pendantMesh} args={[undefined, undefined, quality.dripSites]} frustumCulled={false}>
-        <sphereGeometry args={[1, 12, 12]} />
-        <meshPhysicalMaterial
-          color="#8a7a5e"
-          transmission={quality.lowPower ? 0 : 0.7}
-          opacity={0.85}
-          transparent
-          roughness={0.05}
-          ior={1.33}
-          thickness={0.002}
-        />
+        <sphereGeometry args={[1, 16, 16]} />
+        <DropletMaterial lowPower={quality.lowPower} />
       </instancedMesh>
       <instancedMesh ref={fallingMesh} args={[undefined, undefined, quality.maxDroplets]} frustumCulled={false}>
-        <sphereGeometry args={[1, 10, 10]} />
-        <meshPhysicalMaterial
-          color="#8a7a5e"
-          transmission={quality.lowPower ? 0 : 0.7}
-          opacity={0.85}
-          transparent
-          roughness={0.05}
-          ior={1.33}
-          thickness={0.002}
-        />
+        <sphereGeometry args={[1, 12, 12]} />
+        <DropletMaterial lowPower={quality.lowPower} />
       </instancedMesh>
 
       <Tray />
       <Lights quality={quality} />
     </group>
+  );
+}
+
+/**
+ * Clear water, not beads: high transmission with a glassy highlight where
+ * supported; a barely-tinted translucent fallback on low-power devices.
+ */
+function DropletMaterial({ lowPower }: { lowPower: boolean }) {
+  return (
+    <meshPhysicalMaterial
+      color="#dfe7e4"
+      transmission={lowPower ? 0 : 0.92}
+      opacity={lowPower ? 0.45 : 1}
+      transparent
+      roughness={0.04}
+      metalness={0}
+      ior={1.33}
+      thickness={0.0035}
+      specularIntensity={1}
+      clearcoat={0.6}
+    />
   );
 }
 

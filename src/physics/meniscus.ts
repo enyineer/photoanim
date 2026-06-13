@@ -61,6 +61,31 @@ export function contactLinePull(
 }
 
 /**
+ * Capillary number Ca = mu * U / sigma — the ratio of viscous drag to
+ * surface tension during withdrawal. Governs how much extra liquid the
+ * moving plate entrains beyond the static meniscus.
+ */
+export function capillaryNumber(
+  viscosity: number,
+  speed: number,
+  surfaceTension: number,
+): number {
+  const sigma = Math.max(1e-12, surfaceTension);
+  return (Math.max(0, viscosity) * Math.abs(speed)) / sigma;
+}
+
+/**
+ * Meniscus rise while the plate is being withdrawn (m). A moving contact
+ * line drags liquid upward; following the Landau–Levich scaling the
+ * enhancement grows as Ca^(2/3) on top of the static rise:
+ *   h = h_static * (1 + 1.5 * Ca^(2/3))
+ * Reduces exactly to the static value when the photo is at rest.
+ */
+export function dynamicMeniscusRise(staticRise: number, ca: number): number {
+  return Math.max(0, staticRise) * (1 + 1.5 * Math.cbrt(Math.max(0, ca) ** 2));
+}
+
+/**
  * As the photo's bottom edge approaches the surface from above, the liquid
  * neck stretches before the contact line ruptures. This returns the
  * stretch factor in [0, 1]: 1 while touching, decaying to 0 once the gap

@@ -135,11 +135,23 @@ describe('emergence physics', () => {
     expect(ruptured).toBe(true);
   });
 
-  it('meniscus rise stays within the physical bound lc * sqrt(2)', () => {
+  it('meniscus rise stays within the dynamic physical bound', () => {
+    // Static bound lc*sqrt(2), plus the Landau-Levich enhancement at the
+    // configured maximum lift speed (~14 % for this fluid).
     simulate((t) => Math.min(1, t / 4), 8, (s) => {
       expect(s.meniscusRise).toBeGreaterThan(0);
-      expect(s.meniscusRise).toBeLessThanOrEqual(s.capillaryLen * Math.SQRT2 + 1e-15);
+      expect(s.meniscusRise).toBeLessThanOrEqual(s.capillaryLen * Math.SQRT2 * 1.2);
     });
+  });
+
+  it('the meniscus climbs higher while the photo is moving than at rest', () => {
+    let risingRise = 0;
+    const final = simulate((t) => Math.min(1, t / 4), 12, (s) => {
+      if (s.liftSpeed > 0.05 && s.submergedFraction > 0 && s.submergedFraction < 1) {
+        risingRise = Math.max(risingRise, s.meniscusRise);
+      }
+    });
+    expect(risingRise).toBeGreaterThan(final.meniscusRise);
   });
 });
 

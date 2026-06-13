@@ -25,3 +25,13 @@ export function smoothstep(edge0: number, edge1: number, x: number): number {
 export function isFiniteNumber(x: number): boolean {
   return Number.isFinite(x);
 }
+
+/**
+ * Deterministic hash of an integer index into [0, 1). Used to give drip
+ * sites reproducible-but-irregular weights and thresholds — no RNG state,
+ * so identical inputs always produce identical droplet timelines.
+ */
+export function hash01(i: number): number {
+  const s = Math.sin((i + 1) * 12.9898) * 43758.5453123;
+  return s - Math.floor(s);
+}

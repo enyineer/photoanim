@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clamp, isFiniteNumber, lerp, saturate, smoothstep } from '../math';
+import { clamp, hash01, isFiniteNumber, lerp, saturate, smoothstep } from '../math';
 
 describe('clamp / saturate', () => {
   it('clamps below, inside and above the range', () => {
@@ -43,6 +43,22 @@ describe('smoothstep', () => {
     const eps = 1e-4;
     expect((smoothstep(0, 1, eps) - smoothstep(0, 1, 0)) / eps).toBeLessThan(0.001);
     expect((smoothstep(0, 1, 1) - smoothstep(0, 1, 1 - eps)) / eps).toBeLessThan(0.001);
+  });
+});
+
+describe('hash01', () => {
+  it('is deterministic and stays in [0, 1)', () => {
+    for (let i = -5; i < 50; i++) {
+      const h = hash01(i);
+      expect(h).toBe(hash01(i));
+      expect(h).toBeGreaterThanOrEqual(0);
+      expect(h).toBeLessThan(1);
+    }
+  });
+
+  it('spreads consecutive indices apart (no visible pattern)', () => {
+    const values = Array.from({ length: 20 }, (_, i) => hash01(i));
+    expect(new Set(values.map((v) => v.toFixed(6))).size).toBe(20);
   });
 });
 

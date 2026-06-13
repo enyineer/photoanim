@@ -56,7 +56,11 @@ export const waterVertexShader = /* glsl */ `
     return env * cos(k * packet);
   }
 
-  // meniscus.ts: meniscusProfile — exponential climb toward the photo edge
+  // meniscus.ts: meniscusProfile — exponential climb toward the photo edge.
+  // The rise height comes from the physics core (dynamic meniscus); the
+  // decay length is widened ~3x for presentation, because the true
+  // capillary length (~2.4 mm) is finer than the water-plane tessellation
+  // and would vanish between vertices.
   float meniscusHeight(vec2 p) {
     if (uPierce <= 0.0) return 0.0;
     vec2 a = vec2(-uMeniscus.x, uMeniscus.y);
@@ -64,7 +68,8 @@ export const waterVertexShader = /* glsl */ `
     vec2 ab = b - a;
     float t = clamp(dot(p - a, ab) / dot(ab, ab), 0.0, 1.0);
     float d = length(p - (a + ab * t));
-    return uMeniscus.z * exp(-d / max(uMeniscus.w, 1e-6)) * uPierce;
+    float decay = max(uMeniscus.w * 3.0, 0.009);
+    return uMeniscus.z * 2.0 * exp(-d / decay) * uPierce;
   }
 
   float surfaceHeight(vec2 p) {
@@ -229,8 +234,13 @@ export const photoFragmentShader = /* glsl */ `
     // Streaks keep channels of the film wetter a little longer.
     wet = clamp(wet + (1.0 - wet) * streak * 0.35 * wetnessFromFilm(film * 1.6), 0.0, 1.0);
 
-    // Wet emulsion is darker and slightly saturated.
-    vec3 wetAlbedo = albedo * mix(1.0, 0.74, wet);
+    // wetting.ts: glossFromWetness — a continuous film keeps its mirror
+    // sheen until it is nearly gone.
+    float glossW = 1.0 - pow(1.0 - wet, 3.0);
+
+    // Wet emulsion darkens strongly; the paper border less so.
+    float darken = isBorder ? mix(1.0, 0.78, wet) : mix(1.0, 0.6, wet);
+    vec3 wetAlbedo = albedo * darken;
     // Submerged: the fixer tints and softens the image.
     if (submerged) {
       wetAlbedo = mix(wetAlbedo, wetAlbedo * vec3(0.82, 0.86, 0.8) + vec3(0.02, 0.03, 0.02), 0.45);
@@ -244,17 +254,30 @@ export const photoFragmentShader = /* glsl */ `
     vec3 color = wetAlbedo * (0.42 + 0.62 * diffuse);
 
     // Perturb the normal with the streak field so the sheen breaks up.
-    vec3 nWet = normalize(n + vec3((streak - 0.5) * 0.18 * wet, 0.0, 0.0));
+    vec3 nWet = normalize(n + vec3((streak - 0.5) * 0.22 * wet, 0.0, 0.0));
     vec3 halfDir = normalize(lightDir + viewDir);
-    float gloss = pow(max(dot(nWet, halfDir), 0.0), mix(8.0, 90.0, wet));
-    color += gloss * mix(0.02, 0.5, wet) * vec3(1.0, 0.97, 0.9);
+    float gloss = pow(max(dot(nWet, halfDir), 0.0), mix(8.0, 110.0, glossW));
+    color += gloss * mix(0.02, 0.55, glossW) * vec3(1.0, 0.97, 0.9);
 
-    // The bright sheeting line where the surface clings to the print
-    // (meniscus.ts: the contact line region, ~the meniscus rise tall).
+    // Near-saturated film is a continuous liquid sheet: add a tight mirror
+    // lobe and a faint vertical sheen so the just-emerged region clearly
+    // reads as a sheet of water sliding off.
+    float sheet = smoothstep(0.6, 0.92, wet) * (submerged ? 0.0 : 1.0);
+    float mirror = pow(max(dot(nWet, halfDir), 0.0), 240.0);
+    color += mirror * sheet * 0.7 * vec3(1.0, 0.98, 0.92);
+    color += sheet * 0.06 * vec3(0.9, 0.95, 1.0);
+
+    // The bright clinging line where the bath surface meets the print
+    // (meniscus.ts contact-line region). Width follows the dynamic rise
+    // with a floor so it stays visible at viewing distance.
     if (uPierce > 0.0 && uMeniscusRise > 0.0) {
+      float sigma = max(uMeniscusRise * 1.5, 0.0045);
       float d = yLocal - uWaterline;
-      float band = exp(-(d * d) / (2.0 * uMeniscusRise * uMeniscusRise * 2.25));
-      color += band * uPierce * vec3(0.35, 0.34, 0.3);
+      float band = exp(-(d * d) / (2.0 * sigma * sigma));
+      // Brighter just above the waterline (the dragged-up meniscus film).
+      float crest = exp(-pow((d - sigma * 0.6) / sigma, 2.0));
+      color += band * uPierce * vec3(0.28, 0.27, 0.24);
+      color += crest * uPierce * 0.35 * vec3(1.0, 0.98, 0.9);
     }
 
     gl_FragColor = vec4(color, 1.0);

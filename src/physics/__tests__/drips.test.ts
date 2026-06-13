@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   createDripSites,
+  dripSiteDetachMasses,
+  dripSiteWeights,
   dropletRadius,
   fallDistance,
   HARKINS_BROWN_FRACTION,
@@ -81,6 +83,48 @@ describe('fallDistance', () => {
       expect(d).toBeGreaterThanOrEqual(prev - 1e-15);
       prev = d;
     }
+  });
+});
+
+describe('dripSiteWeights / dripSiteDetachMasses', () => {
+  it('weights are deterministic, positive and genuinely irregular', () => {
+    const a = dripSiteWeights(7);
+    const b = dripSiteWeights(7);
+    expect(a).toEqual(b);
+    expect(a).toHaveLength(7);
+    for (const w of a) expect(w).toBeGreaterThan(0);
+    expect(new Set(a.map((w) => w.toFixed(6))).size).toBe(7); // no two alike
+  });
+
+  it('per-site detach masses vary around the Tate scale', () => {
+    const base = tateDetachmentMass(0.0024, 0.06);
+    const masses = dripSiteDetachMasses(7, 0.0024, 0.06);
+    expect(masses).toHaveLength(7);
+    for (const m of masses) {
+      expect(m).toBeGreaterThan(base * 0.5);
+      expect(m).toBeLessThan(base * 1.5);
+    }
+    expect(new Set(masses.map((m) => m.toExponential(8))).size).toBe(7);
+  });
+
+  it('staggered thresholds and weights desynchronise the drops', () => {
+    // With uniform weights/thresholds every site would fire on the same
+    // step; with the irregular ones the first detachment of each site must
+    // happen on different steps.
+    const n = 5;
+    let state = createDripSites(n);
+    const weights = dripSiteWeights(n);
+    const thresholds = dripSiteDetachMasses(n, 0.0024, 0.06);
+    const firstDrop = new Map<number, number>();
+    for (let i = 0; i < 5000 && firstDrop.size < n; i++) {
+      const res = stepDrips(state, 3e-5, 0.05, thresholds, weights);
+      for (const d of res.detached) {
+        if (!firstDrop.has(d.site)) firstDrop.set(d.site, i);
+      }
+      state = res.state;
+    }
+    expect(firstDrop.size).toBe(n);
+    expect(new Set(firstDrop.values()).size).toBe(n);
   });
 });
 
@@ -171,6 +215,29 @@ describe('stepDrips', () => {
     const before = [...s0.pendantMasses];
     stepDrips(s0, 1e-5, 1, detachMass);
     expect([...s0.pendantMasses]).toEqual(before);
+  });
+
+  it('accepts per-site detachment thresholds', () => {
+    const s0 = { pendantMasses: [9e-5, 9e-5] };
+    const res = stepDrips(s0, 4e-5, 1, [1e-4, 5e-4]);
+    expect(res.detached).toHaveLength(1);
+    expect(res.detached[0].site).toBe(0); // only the low-threshold site fires
+  });
+
+  it('conserves mass with irregular weights and per-site thresholds', () => {
+    const n = 7;
+    let state = createDripSites(n);
+    const weights = dripSiteWeights(n);
+    const thresholds = dripSiteDetachMasses(n, 0.0024, 0.06);
+    const flux = 4e-5;
+    const dt = 0.25;
+    let detachedTotal = 0;
+    for (let i = 0; i < 600; i++) {
+      const res = stepDrips(state, flux, dt, thresholds, weights);
+      for (const d of res.detached) detachedTotal += d.mass;
+      state = res.state;
+    }
+    expect(totalPendantMass(state) + detachedTotal).toBeCloseTo(flux * dt * 600, 10);
   });
 
   it('handles zero sites, zero dt and negative flux gracefully', () => {

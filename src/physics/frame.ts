@@ -8,14 +8,21 @@
 import { FIXER_DENSITY, FIXER_SURFACE_TENSION, FIXER_VISCOSITY, GRAVITY, INITIAL_FILM_THICKNESS } from './constants';
 import { saturate } from './math';
 import { submergedDepth, submergedFraction } from './buoyancy';
-import { capillaryLength, liquidBridgeFactor, meniscusRiseHeight } from './meniscus';
+import {
+  capillaryLength,
+  capillaryNumber,
+  dynamicMeniscusRise,
+  liquidBridgeFactor,
+  meniscusRiseHeight,
+} from './meniscus';
 import { bottomEdgeFlux, filmThickness } from './runoff';
 import {
   createDripSites,
   type DetachedDrop,
   type DripSitesState,
+  dripSiteDetachMasses,
+  dripSiteWeights,
   stepDrips,
-  tateDetachmentMass,
 } from './drips';
 import { liftProgress, photoBottomY, verticalVelocity, waterlineLocal } from './timeline';
 
@@ -137,7 +144,9 @@ export function stepFrame(
   const depth = submergedDepth(bottom, config.photoHeight, config.waterLevelY);
 
   const lc = capillaryLength(config.surfaceTension, config.fluidDensity, config.gravity);
-  const rise = meniscusRiseHeight(config.contactAngle, lc);
+  // Withdrawal drags extra liquid up the plate: dynamic meniscus.
+  const ca = capillaryNumber(config.fluidViscosity, liftSpeed, config.surfaceTension);
+  const rise = dynamicMeniscusRise(meniscusRiseHeight(config.contactAngle, lc), ca);
 
   const emerged = wl < 0;
   const timeSinceEmerged = emerged ? prev.timeSinceEmerged + dt : 0;
@@ -174,10 +183,23 @@ export function stepFrame(
       : 0;
 
   // Pendant drops only grow once the bottom edge is above the surface —
-  // below it the runoff just returns to the bath.
-  const detachMass = tateDetachmentMass(lc, config.surfaceTension, config.gravity);
+  // below it the runoff just returns to the bath. Sites feed and detach
+  // irregularly (deterministic per-site weights and rim radii), so drops
+  // never fall in lockstep.
+  const detachMasses = dripSiteDetachMasses(
+    config.dripSiteCount,
+    lc,
+    config.surfaceTension,
+    config.gravity,
+  );
   const massFlux = emerged ? runoffFlux * config.fluidDensity : 0;
-  const dripResult = stepDrips(prev.drips, massFlux, dt, detachMass);
+  const dripResult = stepDrips(
+    prev.drips,
+    massFlux,
+    dt,
+    detachMasses,
+    dripSiteWeights(config.dripSiteCount),
+  );
 
   return {
     time,

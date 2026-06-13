@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   evaporatedThickness,
   exposureTimeFromKinematics,
+  glossFromWetness,
   wetCoverage,
   wetnessExponential,
   wetnessFromFilm,
@@ -101,6 +102,33 @@ describe('wetnessExponential', () => {
   it('does not blow up for tau = 0', () => {
     expect(Number.isFinite(wetnessExponential(1, 0))).toBe(true);
     expect(wetnessExponential(1, 0)).toBeCloseTo(0, 9);
+  });
+});
+
+describe('glossFromWetness', () => {
+  it('has fixed points at fully dry and fully wet', () => {
+    expect(glossFromWetness(0)).toBe(0);
+    expect(glossFromWetness(1)).toBe(1);
+  });
+
+  it('saturates early: a half-drained film still looks nearly mirror-wet', () => {
+    expect(glossFromWetness(0.5)).toBeGreaterThan(0.85);
+  });
+
+  it('is monotonic, bounded and always >= the raw wetness', () => {
+    let prev = 0;
+    for (let w = 0; w <= 1.0001; w += 0.01) {
+      const g = glossFromWetness(w);
+      expect(g).toBeGreaterThanOrEqual(prev - 1e-15);
+      expect(g).toBeGreaterThanOrEqual(Math.min(w, 1) - 1e-15);
+      expect(g).toBeLessThanOrEqual(1);
+      prev = g;
+    }
+  });
+
+  it('clamps out-of-range wetness', () => {
+    expect(glossFromWetness(-2)).toBe(0);
+    expect(glossFromWetness(5)).toBe(1);
   });
 });
 

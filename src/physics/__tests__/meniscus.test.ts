@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   capillaryLength,
+  capillaryNumber,
   contactLinePull,
+  dynamicMeniscusRise,
   liquidBridgeFactor,
   meniscusProfile,
   meniscusRiseHeight,
@@ -115,6 +117,58 @@ describe('contactLinePull', () => {
   it('is never negative', () => {
     expect(contactLinePull(0.06, 0.3, -1)).toBe(0);
     expect(contactLinePull(-0.06, 0.3, 1)).toBe(0);
+  });
+});
+
+describe('capillaryNumber', () => {
+  it('is mu U / sigma exactly', () => {
+    expect(capillaryNumber(1e-3, 0.1, 0.06)).toBeCloseTo((1e-3 * 0.1) / 0.06, 15);
+  });
+
+  it('is zero at rest and symmetric in direction of motion', () => {
+    expect(capillaryNumber(1e-3, 0, 0.06)).toBe(0);
+    expect(capillaryNumber(1e-3, -0.2, 0.06)).toBe(capillaryNumber(1e-3, 0.2, 0.06));
+  });
+
+  it('is small (<< 1) for realistic print-pulling speeds — surface tension dominates', () => {
+    expect(capillaryNumber(1.15e-3, 0.3, 0.06)).toBeLessThan(0.01);
+  });
+
+  it('stays finite for zero surface tension', () => {
+    expect(Number.isFinite(capillaryNumber(1e-3, 0.1, 0))).toBe(true);
+  });
+});
+
+describe('dynamicMeniscusRise', () => {
+  const staticRise = 0.003;
+
+  it('reduces to the static rise at rest (Ca = 0)', () => {
+    expect(dynamicMeniscusRise(staticRise, 0)).toBe(staticRise);
+  });
+
+  it('increases monotonically with capillary number', () => {
+    let prev = 0;
+    for (let ca = 0; ca <= 0.1; ca += 0.005) {
+      const h = dynamicMeniscusRise(staticRise, ca);
+      expect(h).toBeGreaterThanOrEqual(prev);
+      prev = h;
+    }
+  });
+
+  it('follows the Landau-Levich Ca^(2/3) scaling of the enhancement', () => {
+    const e1 = dynamicMeniscusRise(staticRise, 0.001) - staticRise;
+    const e8 = dynamicMeniscusRise(staticRise, 0.008) - staticRise;
+    expect(e8 / e1).toBeCloseTo(4, 6); // (8x Ca)^(2/3) = 4x
+  });
+
+  it('is a modest correction at realistic pull speeds (< 25 % extra)', () => {
+    const ca = capillaryNumber(1.15e-3, 1.5, 0.06); // fastest allowed lift
+    expect(dynamicMeniscusRise(staticRise, ca)).toBeLessThan(staticRise * 1.25);
+  });
+
+  it('never returns negative values', () => {
+    expect(dynamicMeniscusRise(-1, 0.5)).toBe(0);
+    expect(dynamicMeniscusRise(staticRise, -3)).toBe(staticRise);
   });
 });
 
