@@ -11,6 +11,7 @@ export * from './meniscus';
 export * from './runoff';
 export * from './wetting';
 export * from './drips';
+export * from './runners';
 export * from './waves';
 export * from './timeline';
 export * from './frame';

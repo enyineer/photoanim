@@ -24,6 +24,13 @@ import {
   dripSiteWeights,
   stepDrips,
 } from './drips';
+import {
+  createRunnersState,
+  defaultBeadMass,
+  nearestDripSite,
+  type RunnersState,
+  stepRunners,
+} from './runners';
 import { liftProgress, photoBottomY, verticalVelocity, waterlineLocal } from './timeline';
 
 export interface FrameConfig {
@@ -104,6 +111,8 @@ export interface FrameState {
   readonly drips: DripSitesState;
   /** Drops that detached during this step. */
   readonly detachedDrops: readonly DetachedDrop[];
+  /** Runner beads sliding down the print face toward the low edge. */
+  readonly runners: RunnersState;
 }
 
 /** sin(tilt), with the angle floored away from zero so the plate-coordinate
@@ -135,6 +144,7 @@ export function createFrameState(config: FrameConfig = DEFAULT_FRAME_CONFIG): Fr
     runoffFlux: 0,
     drips: createDripSites(config.dripSiteCount),
     detachedDrops: [],
+    runners: createRunnersState(wl),
   };
 }
 
@@ -211,19 +221,47 @@ export function stepFrame(
         ) * exposedFraction
       : 0;
 
+  // Runner beads: entrained liquid sliding down the face toward the low
+  // edge; their deposits feed the pendant drops below.
+  const spawnSpacing = config.photoHeight / 9;
+  const runnersResult = stepRunners(prev.runners, wl, dt, {
+    spawnSpacing,
+    beadMass: defaultBeadMass(
+      config.fluidDensity,
+      INITIAL_FILM_THICKNESS,
+      spawnSpacing,
+      config.photoWidth * 0.06,
+    ),
+    photoWidth: config.photoWidth,
+    photoHeight: config.photoHeight,
+    gAlongPlate,
+    viscosity: config.fluidViscosity,
+    surfaceTension: config.surfaceTension,
+    fluidDensity: config.fluidDensity,
+    maxBeads: 16,
+  });
+
   // Pendant drops only grow once the bottom edge is above the surface —
   // below it the runoff just returns to the bath. Sites feed and detach
   // irregularly (deterministic per-site weights and rim radii), so drops
-  // never fall in lockstep.
+  // never fall in lockstep. Runner deposits land on their nearest site.
   const detachMasses = dripSiteDetachMasses(
     config.dripSiteCount,
     lc,
     config.surfaceTension,
     config.gravity,
   );
+  let dripsIn = prev.drips;
+  if (runnersResult.deposits.length > 0 && dripsIn.pendantMasses.length > 0) {
+    const masses = [...dripsIn.pendantMasses];
+    for (const dep of runnersResult.deposits) {
+      masses[nearestDripSite(dep.x, masses.length, config.photoWidth)] += dep.mass;
+    }
+    dripsIn = { pendantMasses: masses };
+  }
   const massFlux = emerged ? runoffFlux * config.fluidDensity : 0;
   const dripResult = stepDrips(
-    prev.drips,
+    dripsIn,
     massFlux,
     dt,
     detachMasses,
@@ -246,5 +284,6 @@ export function stepFrame(
     runoffFlux,
     drips: dripResult.state,
     detachedDrops: dripResult.detached,
+    runners: runnersResult.state,
   };
 }

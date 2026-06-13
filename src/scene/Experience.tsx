@@ -44,7 +44,10 @@ import { DEFAULT_PHOTO_URL } from '../photoUrl';
  * the timing, masses and trajectories stay physical, only the rendered
  * size is scaled.
  */
-const DROP_RENDER_SCALE = 2.2;
+const DROP_RENDER_SCALE = 1.6;
+
+/** Matches the maxBeads cap inside the physics frame step. */
+const MAX_RUNNERS = 16;
 
 const TRAY_INNER_W = 0.47;
 const TRAY_INNER_D = 0.34;
@@ -134,6 +137,7 @@ export function Experience({ quality, photoUrl, scrollRef }: {
   const waterMaterial = useRef<THREE.ShaderMaterial>(null);
   const pendantMesh = useRef<THREE.InstancedMesh>(null);
   const fallingMesh = useRef<THREE.InstancedMesh>(null);
+  const runnersMesh = useRef<THREE.InstancedMesh>(null);
 
   const dummy = useMemo(() => new THREE.Object3D(), []);
 
@@ -275,6 +279,34 @@ export function Experience({ quality, photoUrl, scrollRef }: {
       lastRippleTime.current = state.time;
     }
 
+    // --- runner beads sliding down the print face --------------------------
+    if (runnersMesh.current) {
+      const beads = state.runners.beads;
+      for (let i = 0; i < MAX_RUNNERS; i++) {
+        const b = beads[i];
+        if (b) {
+          const rs = b.radius * DROP_RENDER_SCALE;
+          // Plate coords -> world; lifted off the face along its normal.
+          const lift = rs * 0.35;
+          dummy.position.set(
+            b.x,
+            state.photoBottomY + b.p * sinT + lift * cosT,
+            groupZ - b.p * cosT + lift * sinT,
+          );
+          dummy.rotation.set(-Math.PI / 2 + config.tiltAngle, 0, 0);
+          // Flattened against the face, elongated down-plate.
+          dummy.scale.set(rs * 0.85, rs * 1.5, rs * 0.4);
+        } else {
+          dummy.position.set(0, -10, 0);
+          dummy.rotation.set(0, 0, 0);
+          dummy.scale.setScalar(1e-6);
+        }
+        dummy.updateMatrix();
+        runnersMesh.current.setMatrixAt(i, dummy.matrix);
+      }
+      runnersMesh.current.instanceMatrix.needsUpdate = true;
+    }
+
     // --- pendant drops on the bottom edge ---------------------------------
     // Drops bulge into view gradually as liquid gathers, sag and stretch as
     // they near their Tate threshold, then release. Drainage weights are
@@ -285,14 +317,18 @@ export function Experience({ quality, photoUrl, scrollRef }: {
         const mass = state.drips.pendantMasses[i];
         const r = dropletRadius(mass, config.fluidDensity);
         // Smooth emergence instead of a pop-in, plus sag toward detachment.
-        const grow = fullyOut ? smoothstep(4e-4, 1.2e-3, r) : 0;
+        const grow = fullyOut ? smoothstep(6e-4, 1.5e-3, r) : 0;
         const near = smoothstep(0.45, 1, mass / detachMasses[i]);
         const s = r * DROP_RENDER_SCALE * grow;
         const x = pendantSiteX(i, n, config.photoWidth);
-        const zJitter = (hash01(i + 57) - 0.5) * 0.004;
-        dummy.position.set(x, state.photoBottomY - s * 0.85, groupZ + 0.001 + zJitter);
-        const wScale = s * (0.9 - 0.15 * near);
-        dummy.scale.set(Math.max(wScale, 1e-6), Math.max(s * (1.15 + 0.55 * near), 1e-6), Math.max(wScale, 1e-6));
+        const sy = Math.max(s * (1.15 + 0.55 * near), 1e-6);
+        const zJitter = (hash01(i + 57) - 0.5) * 0.0015;
+        // Anchored to the edge: the ellipsoid's top overlaps the paper so
+        // the drop hangs *from* the print instead of floating below it.
+        dummy.position.set(x, state.photoBottomY + 0.0008 - sy * 0.62, groupZ - 0.0005 + zJitter);
+        dummy.rotation.set(0, 0, 0);
+        const wScale = Math.max(s * (0.9 - 0.15 * near), 1e-6);
+        dummy.scale.set(wScale, sy, wScale);
         dummy.updateMatrix();
         pendantMesh.current.setMatrixAt(i, dummy.matrix);
       }
@@ -331,6 +367,7 @@ export function Experience({ quality, photoUrl, scrollRef }: {
         if (d) {
           const y = d.startY - fallDistance(state.time - d.startTime, d.vTerminal, config.gravity);
           dummy.position.set(d.x, y, d.z);
+          dummy.rotation.set(0, 0, 0);
           // Drops stretch slightly as they accelerate.
           const s = d.radius * DROP_RENDER_SCALE;
           dummy.scale.set(s * 0.85, s * 1.3, s * 0.85);
@@ -383,11 +420,15 @@ export function Experience({ quality, photoUrl, scrollRef }: {
       {/* droplets */}
       <instancedMesh ref={pendantMesh} args={[undefined, undefined, quality.dripSites]} frustumCulled={false}>
         <sphereGeometry args={[1, 16, 16]} />
-        <DropletMaterial lowPower={quality.lowPower} />
+        <DropletMaterial />
       </instancedMesh>
       <instancedMesh ref={fallingMesh} args={[undefined, undefined, quality.maxDroplets]} frustumCulled={false}>
         <sphereGeometry args={[1, 12, 12]} />
-        <DropletMaterial lowPower={quality.lowPower} />
+        <DropletMaterial />
+      </instancedMesh>
+      <instancedMesh ref={runnersMesh} args={[undefined, undefined, MAX_RUNNERS]} frustumCulled={false}>
+        <sphereGeometry args={[1, 12, 12]} />
+        <DropletMaterial opacity={0.4} />
       </instancedMesh>
 
       <Tray />
@@ -397,22 +438,24 @@ export function Experience({ quality, photoUrl, scrollRef }: {
 }
 
 /**
- * Clear water, not beads: high transmission with a glassy highlight where
- * supported; a barely-tinted translucent fallback on low-power devices.
+ * Glassy ghost water: mostly see-through with a bright rim and a sharp
+ * highlight. Transmission rendered these as opaque eggs against the dark
+ * tray, so plain transparency with strong specular reads far more like
+ * water at this size.
  */
-function DropletMaterial({ lowPower }: { lowPower: boolean }) {
+function DropletMaterial({ opacity = 0.32 }: { opacity?: number }) {
   return (
     <meshPhysicalMaterial
-      color="#e9eff1"
-      transmission={lowPower ? 0 : 0.95}
-      opacity={lowPower ? 0.4 : 1}
+      color="#dfe9ec"
       transparent
-      roughness={0.02}
+      opacity={opacity}
+      roughness={0.06}
       metalness={0}
       ior={1.33}
-      thickness={0.004}
       specularIntensity={1}
-      clearcoat={0.8}
+      clearcoat={0.9}
+      clearcoatRoughness={0.05}
+      depthWrite={false}
     />
   );
 }
